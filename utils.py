@@ -1,0 +1,144 @@
+import torch
+from torch import nn
+import torchaudio
+from torch.utils.data import Dataset, DataLoader
+import numpy as np
+import pandas as pd
+from matplotlib import pyplot as plt
+from tqdm.auto import tqdm
+from typing import Dict, List
+from pathlib import Path
+
+class ToMono(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, waveform):
+        if waveform.shape[0] > 1:
+            waveform = torch.mean(waveform, dim=0, keepdim=True)
+        return waveform
+
+class PadTrim(nn.Module):
+    def __init__(self, start_pos, max_len):
+        super().__init__()
+        self.start_pos = start_pos
+        self.max_len = max_len
+        self.end_pos = start_pos + max_len
+
+    def forward(self, waveform):
+        # shape[0]是声道数
+        pad_amount = self.end_pos - waveform.shape[1]
+        if waveform.shape[1] < self.end_pos:
+            waveform = nn.functional.pad(waveform, (0, pad_amount))
+
+        waveform = waveform[:, self.start_pos : self.end_pos]
+        return waveform
+
+class DEAMDataset(Dataset):
+    def __init__(self, audio_paths, labels, transform=None):
+        self.audio_paths = audio_paths
+        self.labels = labels
+        self.transform = transform
+
+    def __getitem__(self, index):
+        audio_path = self.audio_paths[index]
+        song_id = int(audio_path.stem)
+        waveform, sample_rate = torchaudio.load(audio_path)
+
+        if self.transform:
+            waveform = self.transform(waveform)
+
+        label = self.labels[song_id]
+        return waveform, label
+
+    def __len__(self):
+        return len(self.audio_paths)
+
+def read_label_csv(arousal_path, valence_path):
+    arousal_df = pd.read_csv(arousal_path, index_col='song_id')
+    valence_df = pd.read_csv(valence_path, index_col='song_id')
+
+    target_cols = [f'sample_{ms}ms' for ms in range(15000, 44500 + 1, 500)]
+
+    labels = {}
+    for song_id in valence_df.index:
+        arousal = arousal_df.loc[song_id, target_cols].values.astype('float32')  # (60)
+        valence = valence_df.loc[song_id, target_cols].values.astype('float32')  # (60)
+
+        label = np.stack([arousal, valence], axis=1)  # (60, 2)
+        labels[int(song_id)] = label
+
+    return labels
+
+def plot_line_graph(data):
+    plt.figure(figsize=(10, 4))
+    plt.plot(data)
+    plt.show()
+
+def train_step(model, dataloader, loss_fn, optimizer, device):
+    model.train()
+
+    train_loss = 0.0
+    for batch, (X, y) in enumerate(dataloader):
+        X, y = X.to(device), y.to(device)
+
+        y_pred = model(X)
+
+        loss = loss_fn(y_pred, y)
+        train_loss += loss.item()
+
+        optimizer.zero_grad()
+
+        loss.backward()
+
+        optimizer.step()
+
+    train_loss /= len(dataloader)
+
+    return train_loss
+
+def test_step(model, dataloader, loss_fn, device):
+    model.eval()
+
+    test_loss = 0.0
+    with torch.inference_mode():
+        for batch, (X, y) in enumerate(dataloader):
+            X, y = X.to(device), y.to(device)
+
+            y_pred = model(X)
+
+            loss = loss_fn(y_pred, y)
+            test_loss += loss.item()
+
+        test_loss /= len(dataloader)
+        return test_loss
+
+def train(model: torch.nn.Module,
+          train_dataloader: torch.utils.data.DataLoader,
+          test_dataloader: torch.utils.data.DataLoader,
+          optimizer: torch.optim.Optimizer,
+          loss_fn: torch.nn.Module,
+          epochs: int=5,
+          device: torch.device="cpu") -> Dict[str, List]:
+    results = {"train_loss": [], "test_loss": []}
+
+    for epoch in tqdm(range(epochs)):
+        train_loss = train_step(model, train_dataloader, loss_fn, optimizer, device)
+        test_loss = test_step(model, test_dataloader, loss_fn, device)
+
+        print(f"Epoch: {epoch+1} | Train loss: {train_loss:.4f} | Test loss: {test_loss:.4f}")
+
+        results["train_loss"].append(train_loss)
+        results["test_loss"].append(test_loss)
+
+    return results
+
+def save_model(model: torch.nn.Module, target_dir: str, model_name: str):
+    target_dir = Path(target_dir)
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    assert model_name.endswith(".pth") or model_name.endswith(".pt")
+    model_save_path = target_dir / model_name
+
+    print(f"Saving model to: {model_save_path}")
+    torch.save(obj=model.state_dict(), f=model_save_path)
