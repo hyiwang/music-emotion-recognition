@@ -75,6 +75,41 @@ def plot_line_graph(data):
     plt.plot(data)
     plt.show()
 
+def plot_train_test_loss(results):
+    """
+    绘制训练误差和测试误差随 epoch 变化的曲线。
+
+    Args:
+        results: train() 返回的字典，包含 train_loss 和 test_loss。
+    """
+    train_losses = results["train_loss"]
+    test_losses = results["test_loss"]
+
+    epochs = range(1, len(train_losses) + 1)
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+    # 训练误差
+    axes[0].plot(epochs, train_losses, marker="o", label="Train Loss")
+    axes[0].set_title("Training Loss")
+    axes[0].set_xlabel("Epoch")
+    axes[0].set_ylabel("MSE Loss")
+    axes[0].set_xticks(list(epochs))
+    axes[0].grid(True, linestyle="--", alpha=0.5)
+    axes[0].legend()
+
+    # 测试误差
+    axes[1].plot(epochs, test_losses, marker="o", color="orange", label="Test Loss")
+    axes[1].set_title("Test Loss")
+    axes[1].set_xlabel("Epoch")
+    axes[1].set_ylabel("MSE Loss")
+    axes[1].set_xticks(list(epochs))
+    axes[1].grid(True, linestyle="--", alpha=0.5)
+    axes[1].legend()
+
+    fig.tight_layout()
+    plt.show()
+
 def train_step(model, dataloader, loss_fn, optimizer, device):
     model.train()
 
