@@ -1,16 +1,15 @@
 import argparse
+import numpy as np
 import torch
 from torch import nn
 import torchaudio
 from torchaudio import transforms
 
 from model import RNN
-from utils import ToMono, PadTrim
+from utils import ToMono, PadTrim, plot_pred_label
+from config import *
 
-SAMPLE_RATE = 16000
 START_TIME = 0 # seconds
-PADTRIM_TIME = 30 # seconds
-N_MELS = 64
 
 parser = argparse.ArgumentParser(description="Predict using a model.")
 parser.add_argument("--audio_path", type=str, required=True, help="Path to the audio for prediction.")
@@ -42,7 +41,9 @@ audio = transform(waveform).to(device)
 model = RNN().to(device)
 model.load_state_dict(torch.load(model_path))
 
+times = np.arange(START_TIME, START_TIME + PADTRIM_TIME - 1e-6, 0.5)
+
 model.eval()
 with torch.inference_mode():
     y_pred = model(audio)
-    print(y_pred)
+    plot_pred_label(times, y_pred)

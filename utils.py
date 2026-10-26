@@ -9,6 +9,8 @@ from tqdm.auto import tqdm
 from typing import Dict, List
 from pathlib import Path
 
+from config import *
+
 class ToMono(nn.Module):
     def __init__(self):
         super().__init__()
@@ -70,6 +72,11 @@ def read_label_csv(arousal_path, valence_path):
 
     return labels
 
+def to_numpy(value):
+    if isinstance(value, torch.Tensor):
+        return value.detach().cpu().numpy()
+    return np.asarray(value)
+
 def plot_line_graph(data):
     plt.figure(figsize=(10, 4))
     plt.plot(data)
@@ -107,6 +114,41 @@ def plot_train_test_loss(results):
     axes[1].grid(True, linestyle="--", alpha=0.5)
     axes[1].legend()
 
+    fig.tight_layout()
+    plt.show()
+
+def plot_pred_label(x, pred, label=None):
+
+    x = to_numpy(x)
+    pred = to_numpy(pred)
+    # 去掉 batch 维度
+    if pred.ndim == 3:
+        pred = pred[0]
+
+    if label is not None:
+        label = to_numpy(label)
+        if label.ndim == 3:
+            label = label[0]
+
+    fig, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
+
+    names = ["Arousal", "Valence"]
+
+    for i, name in enumerate(names):
+        axes[i].plot(x, pred[:, i], label="Prediction",
+                     marker="o", markersize=3)
+
+        if label is not None:
+            label = np.asarray(label)
+            axes[i].plot(x, label[:, i], label="Ground Truth",
+                         marker="o", markersize=3)
+
+        axes[i].set_title(name)
+        axes[i].set_ylabel("Value")
+        axes[i].grid(True, linestyle="--", alpha=0.5)
+        axes[i].legend()
+
+    axes[1].set_xlabel("Time")
     fig.tight_layout()
     plt.show()
 
@@ -154,7 +196,8 @@ def train(model: torch.nn.Module,
           optimizer: torch.optim.Optimizer,
           loss_fn: torch.nn.Module,
           epochs: int=5,
-          device: torch.device="cpu") -> Dict[str, List]:
+          device: torch.device="cpu",
+          save_every: int=0) -> Dict[str, List]:
     results = {"train_loss": [], "test_loss": []}
 
     for epoch in tqdm(range(epochs)):
@@ -165,6 +208,11 @@ def train(model: torch.nn.Module,
 
         results["train_loss"].append(train_loss)
         results["test_loss"].append(test_loss)
+
+        if save_every > 0 and (epoch + 1) % save_every == 0:
+            save_model(model=model,
+                       target_dir=MODEL_DIR,
+                       model_name=f"rnn_epoch_{epoch + 1}.pth")
 
     return results
 

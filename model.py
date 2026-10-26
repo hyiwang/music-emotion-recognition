@@ -1,7 +1,8 @@
 from torch import nn
+from config import *
 
 class RNN(nn.Module):
-    def __init__(self, n_mels=64, hidden_size=128, num_layers=2, num_labels=60, output_dim=2):
+    def __init__(self, n_mels=N_MELS, hidden_size=128, num_layers=2, num_labels=60, output_dim=2):
         super().__init__()
 
         self.rnn = nn.GRU(
