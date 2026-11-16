@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 import torchaudio
+from torchaudio import transforms
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
 import pandas as pd
@@ -35,6 +36,99 @@ class PadTrim(nn.Module):
 
         waveform = waveform[:, self.start_pos : self.end_pos]
         return waveform
+
+class NormalizeMel(nn.Module):
+    """按 mel 频带做标准化：x' = (x - mean) / std。
+
+    mean/std 是在训练集上统计出的、形状为 (n_mels,) 的常数。
+    输入形状 (B, n_mels, T) 或 (1, n_mels, T)，输出形状不变。
+    """
+
+    def __init__(self, mean, std, eps=1e-6):
+        super().__init__()
+        self.register_buffer("mean", torch.as_tensor(mean, dtype=torch.float32).view(1, -1, 1))
+        self.register_buffer("std", torch.as_tensor(std, dtype=torch.float32).view(1, -1, 1))
+        self.eps = eps
+
+    def forward(self, x):
+        return (x - self.mean) / (self.std + self.eps)
+
+def build_transform(mel_stats=None, start_time=None, duration=None,
+                    orig_freq=ORIGINAL_SAMPLE_RATE):
+    """构造训练、测试、推理共用的音频预处理流水线。
+
+    Args:
+        mel_stats: (mean, std) 每个 mel 频带的统计量；None 表示不做标准化。
+        start_time: 截取起点（秒），默认与训练一致（15.0s）。
+        duration: 截取时长（秒），默认 30s。
+        orig_freq: 输入音频的采样率。训练/测试假设 44.1kHz；
+            推理时可传入文件真实采样率。
+    """
+    if start_time is None:
+        start_time = LABEL_START_TIME
+    if duration is None:
+        duration = PADTRIM_TIME
+
+    steps = [
+        ToMono(),
+        transforms.Resample(orig_freq=orig_freq, new_freq=SAMPLE_RATE),
+        PadTrim(start_pos=int(SAMPLE_RATE * start_time),
+                max_len=int(SAMPLE_RATE * duration)),
+        transforms.MelSpectrogram(sample_rate=SAMPLE_RATE, n_fft=N_FFT,
+                                  hop_length=HOP_LENGTH, n_mels=N_MELS),
+        transforms.AmplitudeToDB(),
+    ]
+    if mel_stats is not None:
+        steps.append(NormalizeMel(*mel_stats))
+    return nn.Sequential(*steps)
+
+@torch.no_grad()
+def compute_mel_stats(audio_paths, base_transform):
+    """遍历训练集，统计每个 mel 频带的均值和标准差。
+
+    base_transform 必须是“不含 NormalizeMel”的流水线。
+    返回 (mean, std)，形状均为 (n_mels,)。
+    """
+    total = torch.zeros(N_MELS, dtype=torch.float64)
+    total_sq = torch.zeros(N_MELS, dtype=torch.float64)
+    n_frames = 0
+
+    for path in tqdm(audio_paths, desc="mel stats"):
+        waveform, _ = torchaudio.load(path)
+        mel = base_transform(waveform)          # (1, n_mels, T)
+        total += mel.sum(dim=(0, 2)).double()
+        total_sq += mel.double().pow(2).sum(dim=(0, 2))
+        n_frames += mel.shape[-1]
+
+    mean = total / n_frames
+    std = (total_sq / n_frames - mean.pow(2)).clamp_min(1e-8).sqrt()
+    return mean.float(), std.float()
+
+def save_mel_stats(path, mean, std, start_time=LABEL_START_TIME, duration=PADTRIM_TIME):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save({"mean": mean, "std": std, "n_mels": N_MELS,
+                "sample_rate": SAMPLE_RATE,
+                "start_time": start_time, "duration": duration}, path)
+    print(f"Saved mel stats to: {path}")
+
+def load_mel_stats(path):
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Mel stats not found: {path}. Run train.py first to generate it."
+        )
+    data = torch.load(path, map_location="cpu")
+    expected = {"n_mels": N_MELS, "sample_rate": SAMPLE_RATE,
+                "start_time": LABEL_START_TIME, "duration": PADTRIM_TIME}
+    stale = {k: (data.get(k), v) for k, v in expected.items() if data.get(k) != v}
+    if stale:
+        detail = ", ".join(f"{k}: file={a}, expected={b}" for k, (a, b) in stale.items())
+        raise ValueError(
+            f"{path} does not match the current preprocessing ({detail}). "
+            f"Delete it and rerun train.py."
+        )
+    return data["mean"], data["std"]
 
 class DEAMDataset(Dataset):
     def __init__(self, audio_paths, labels, transform=None):

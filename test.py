@@ -3,24 +3,20 @@ import random
 from pathlib import Path
 
 import torch
-from torch import nn
-from torchaudio import transforms
+import torchaudio
 import numpy as np
 import matplotlib.pyplot as plt
 
 from model import RNN
-from utils import ToMono, PadTrim, read_label_csv
+from utils import build_transform, load_mel_stats, read_label_csv
 from config import *
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--n", type=int, default=1, help="测试歌曲数量，1～6")
+parser.add_argument("--n", type=int, default=1, help="测试歌曲数量，1～5")
 args = parser.parse_args()
 
 if not 1 <= args.n <= 5:
     parser.error("--n 必须在 1～5 之间")
-
-START_TIME = 14.5  # 与训练时 PadTrim 的起始时间一致
-DURATION = 30
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -32,7 +28,6 @@ labels = read_label_csv(
     Path("data/DEAM/annotations/annotations_average/dynamic/valence.csv")
 )
 
-# 只选择有标签的音频
 audio_paths = [
     p for p in audio_dir.glob("*.mp3")
     if p.stem.isdigit() and int(p.stem) in labels
@@ -43,21 +38,8 @@ if len(audio_paths) < args.n:
 
 selected = random.sample(audio_paths, args.n)
 
-transform = nn.Sequential(
-    ToMono(),
-    transforms.Resample(orig_freq=44100, new_freq=SAMPLE_RATE),
-    PadTrim(
-        start_pos=int(SAMPLE_RATE * START_TIME),
-        max_len=int(SAMPLE_RATE * DURATION)
-    ),
-    transforms.MelSpectrogram(
-        sample_rate=SAMPLE_RATE,
-        n_fft=1024,
-        hop_length=512,
-        n_mels=N_MELS
-    ),
-    transforms.AmplitudeToDB()
-)
+mel_mean, mel_std = load_mel_stats(MEL_STATS_PATH)
+transform = build_transform((mel_mean, mel_std))
 
 model = RNN(n_mels=N_MELS).to(device)
 model.load_state_dict(torch.load(model_path, map_location=device))
@@ -70,9 +52,7 @@ results = []
 
 with torch.inference_mode():
     for path in selected:
-        waveform = transform(
-            __import__("torchaudio").load(path)[0]
-        ).unsqueeze(0).to(device)
+        waveform = transform(torchaudio.load(path)[0]).unsqueeze(0).to(device)
 
         pred = model(waveform).squeeze(0).cpu().numpy()
         label = np.asarray(labels[int(path.stem)])

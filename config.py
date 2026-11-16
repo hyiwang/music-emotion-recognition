@@ -12,6 +12,7 @@ RESULT_DIR = PROJECT_DIR / "results"
 AROUSAL_PATH = ANNOTATION_DIR / "arousal.csv"
 VALENCE_PATH = ANNOTATION_DIR / "valence.csv"
 MODEL_PATH = MODEL_DIR / "rnn.pth"
+MEL_STATS_PATH = MODEL_DIR / "mel_stats.pt"   # 每个 mel 频带的均值/标准差
 
 # ==================== 音频处理参数 ====================
 ORIGINAL_SAMPLE_RATE = 44100
@@ -24,3 +25,6 @@ HOP_LENGTH = 512
 PADTRIM_TIME = 30 # seconds
 LABEL_START_TIME = 15 # seconds
 LABEL_INTERVAL = 0.5 # seconds
+
+# ==================== 训练参数 ====================
+SEED = 42

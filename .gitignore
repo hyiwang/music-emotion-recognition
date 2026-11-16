@@ -4,3 +4,8 @@ data/
 models/
 papers/
 results/
+analysis/
+gradio/
+torchinductor_*/
+pip-*/
+tmp*/

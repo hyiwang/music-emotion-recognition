@@ -88,6 +88,8 @@ transform：
 
 - AmplitudeToDB - 将得到的振幅转换为分贝形式。1. 梅尔频谱图的值差异较大，直接作为神经网络输入不方便处理；2. 人耳对声音强弱的感知本身也更接近对数关系。（最终得到的是个相对值）
 
+- NormalizeMel - 频带归一化。
+
 `X: (1, 128, 938) - (channel, n_mels, num_of_time_frames)`
 
 ### 3. 构建RNN模型
